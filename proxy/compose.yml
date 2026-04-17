@@ -71,7 +71,7 @@ services:
       ZBX_TLS_PSK_VALUE: ${ZBX_TLS_PSK_VALUE}
 
       TZ: ${TZ}
-    entrypoint: ["/bin/sh", "-c", "mkdir -p /var/lib/zabbix/enc && echo -n $$ZBX_TLS_PSK_VALUE > /var/lib/zabbix/enc/proxy.psk && exec /usr/sbin/zabbix_proxy -f"]
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /var/lib/zabbix/enc && echo -n $$ZBX_TLS_PSK_VALUE > /var/lib/zabbix/enc/proxy.psk && exec /usr/bin/docker-entrypoint.sh /usr/sbin/zabbix_proxy --foreground -c /etc/zabbix/zabbix_proxy.conf"]
     volumes:
       # Database SQLite persistente - fondamentale!
       - proxy_data:/var/lib/zabbix
