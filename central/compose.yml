@@ -152,7 +152,7 @@ services:
   # Caddy - Reverse proxy con Let's Encrypt automatico
   # ----------------------------------------------------------------------------
   caddy:
-    image: caddy:2-alpine
+    image: ghcr.io/caddybuilds/caddy-cloudflare:latest
     container_name: zabbix-caddy
     restart: unless-stopped
     stop_grace_period: 10s
@@ -163,6 +163,8 @@ services:
       - "443:443"
       - "443:443/udp"  # HTTP/3
     environment:
+      CLOUDFLARE_EMAIL: ${CLOUDFLARE_EMAIL}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
       ZBX_FQDN: ${ZBX_FQDN}
       ACME_EMAIL: ${ACME_EMAIL}
       TZ: ${TZ}

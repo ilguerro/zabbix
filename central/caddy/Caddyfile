@@ -10,10 +10,14 @@
 
 # Opzioni globali
 {
-	email {$ACME_EMAIL}
+	# Using HTTP-01
+	# email {$ACME_EMAIL}
 	# Decommenta la riga sotto per usare lo staging di Let's Encrypt durante i test
 	# (evita di sbattere contro i rate limit di produzione)
 	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+
+	# Using DNS-01
+	acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 
 	# Log globale
 	log {
@@ -91,24 +95,3 @@
 		max_size 50MB
 	}
 }
-
-# ------------------------------------------------------------------------------
-# ESEMPI DI CONFIGURAZIONI AGGIUNTIVE
-# ------------------------------------------------------------------------------
-# Se vuoi limitare l'accesso a IP specifici (es. solo VPN MSP), aggiungi
-# questo blocco dentro il site {$ZBX_FQDN}:
-#
-#   @allowed_ips {
-#     remote_ip 10.0.0.0/8 192.168.0.0/16 1.2.3.4/32
-#   }
-#   handle @allowed_ips {
-#     reverse_proxy zabbix-web:8080 { ... }
-#   }
-#   respond "Access denied" 403
-#
-# ------------------------------------------------------------------------------
-# Se gestisci più domini (es. anche status page), aggiungi altri blocchi:
-#
-#   status.msp.example.com {
-#     reverse_proxy uptime-kuma:3001
-#   }
