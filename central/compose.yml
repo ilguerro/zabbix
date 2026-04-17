@@ -1,0 +1,266 @@
+name: zabbix-central
+
+services:
+
+  # ----------------------------------------------------------------------------
+  # Database: PostgreSQL 16 + TimescaleDB
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: zabbix-postgres
+    restart: unless-stopped
+    stop_grace_period: 1m
+    # mem_limit: 2g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - zabbix-backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Tuning di base - aggiusta in base a RAM della VM
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=${PG_MAX_CONNECTIONS}"
+      - "-c"
+      - "shared_buffers=${PG_SHARED_BUFFERS}"
+      - "-c"
+      - "effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE}"
+      - "-c"
+      - "work_mem=${PG_WORK_MEM}"
+      - "-c"
+      - "maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM}"
+      - "-c"
+      - "random_page_cost=${PG_RANDOM_PAGE_COST}"
+      - "-c"
+      - "effective_io_concurrency=${PG_EFFECTIVE_IO_CONCURRENCY}"
+      - "-c"
+      - "wal_buffers=${PG_WAL_BUFFERS}"
+      - "-c"
+      - "checkpoint_completion_target=${PG_CHECKPOINT_COMPLETION_TARGET}"
+
+  # ----------------------------------------------------------------------------
+  # Zabbix Server
+  # ----------------------------------------------------------------------------
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:${ZABBIX_VERSION}
+    container_name: zabbix-server
+    restart: unless-stopped
+    stop_grace_period: 30s
+    # mem_limit: 4g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Porta per agent attivi e connessioni dai proxy
+      - "10051:10051"
+    environment:
+      DB_SERVER_HOST: postgres
+      DB_SERVER_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      ZBX_ENABLE_SNMP_TRAPS: "true"
+      ZBX_TIMEOUT: ${ZBX_TIMEOUT}
+      ZBX_STARTPOLLERS: ${ZBX_STARTPOLLERS}
+      ZBX_STARTPOLLERSUNREACHABLE: ${ZBX_STARTPOLLERSUNREACHABLE}
+      ZBX_STARTTRAPPERS: ${ZBX_STARTTRAPPERS}
+      ZBX_STARTPINGERS: ${ZBX_STARTPINGERS}
+      ZBX_STARTDISCOVERERS: ${ZBX_STARTDISCOVERERS}
+      ZBX_STARTHTTPPOLLERS: ${ZBX_STARTHTTPPOLLERS}
+      ZBX_CACHESIZE: ${ZBX_CACHESIZE}
+      ZBX_HISTORYCACHESIZE: ${ZBX_HISTORYCACHESIZE}
+      ZBX_HISTORYINDEXCACHESIZE: ${ZBX_HISTORYINDEXCACHESIZE}
+      ZBX_TRENDCACHESIZE: ${ZBX_TRENDCACHESIZE}
+      ZBX_VALUECACHESIZE: ${ZBX_VALUECACHESIZE}
+      TZ: ${TZ}
+    volumes:
+      - ./zabbix/alertscripts:/usr/lib/zabbix/alertscripts:ro
+      - ./zabbix/externalscripts:/usr/lib/zabbix/externalscripts:ro
+      - snmptraps:/var/lib/zabbix/snmptraps:ro
+      - ./zabbix/mibs:/var/lib/zabbix/mibs:ro
+      - ./zabbix/enc:/var/lib/zabbix/enc:ro
+    networks:
+      - zabbix-backend
+      - zabbix-frontend
+    sysctls:
+      - net.ipv4.ip_local_port_range=1024 65000
+      - net.ipv4.conf.all.accept_redirects=0
+      - net.ipv4.conf.all.secure_redirects=0
+      - net.ipv4.conf.all.send_redirects=0
+
+  # ----------------------------------------------------------------------------
+  # Zabbix Web (frontend Nginx)
+  # ----------------------------------------------------------------------------
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:${ZABBIX_VERSION}
+    container_name: zabbix-web
+    restart: unless-stopped
+    stop_grace_period: 10s
+    # mem_limit: 1g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      zabbix-server:
+        condition: service_started
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_PORT: 10051
+      DB_SERVER_HOST: postgres
+      DB_SERVER_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PHP_TZ: ${TZ}
+      ZBX_SERVER_NAME: ${ZBX_SERVER_NAME}
+    networks:
+      - zabbix-backend
+      - zabbix-frontend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ----------------------------------------------------------------------------
+  # Caddy - Reverse proxy con Let's Encrypt automatico
+  # ----------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: zabbix-caddy
+    restart: unless-stopped
+    stop_grace_period: 10s
+    depends_on:
+      - zabbix-web
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    environment:
+      ZBX_FQDN: ${ZBX_FQDN}
+      ACME_EMAIL: ${ACME_EMAIL}
+      TZ: ${TZ}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data           # Certificati Let's Encrypt (persistenti!)
+      - caddy_config:/config
+    networks:
+      - zabbix-frontend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health-check-zabbix-msp"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ----------------------------------------------------------------------------
+  # Zabbix Agent 2 (per automonitoring del server centrale)
+  # ----------------------------------------------------------------------------
+  zabbix-agent:
+    image: zabbix/zabbix-agent2:${ZABBIX_VERSION}
+    container_name: zabbix-agent
+    restart: unless-stopped
+    depends_on:
+      - zabbix-server
+    environment:
+      ZBX_HOSTNAME: "Zabbix server"
+      ZBX_SERVER_HOST: "zabbix-server,127.0.0.1"
+      ZBX_SERVER_ACTIVE: "zabbix-server"
+      ZBX_PASSIVE_ALLOW: "true"
+      TZ: ${TZ}
+    networks:
+      - zabbix-backend
+    privileged: true
+    pid: host
+
+  # ----------------------------------------------------------------------------
+  # SNMP Traps (facoltativo ma utile per ricevere trap SNMP da switch/stampanti)
+  # ----------------------------------------------------------------------------
+  zabbix-snmptraps:
+    image: zabbix/zabbix-snmptraps:${ZABBIX_VERSION}
+    container_name: zabbix-snmptraps
+    restart: unless-stopped
+    ports:
+      - "162:1162/udp"
+    volumes:
+      - snmptraps:/var/lib/zabbix/snmptraps:rw
+    environment:
+      TZ: ${TZ}
+    networks:
+      - zabbix-backend
+
+  # ----------------------------------------------------------------------------
+  # Backup automatico del database PostgreSQL
+  # ----------------------------------------------------------------------------
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:16
+    container_name: zabbix-postgres-backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_EXTRA_OPTS: "-Z9 --blobs"
+      SCHEDULE: "${BACKUP_SCHEDULE}"
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS}
+      BACKUP_KEEP_WEEKS: ${BACKUP_KEEP_WEEKS}
+      BACKUP_KEEP_MONTHS: ${BACKUP_KEEP_MONTHS}
+      HEALTHCHECK_PORT: 8080
+      TZ: ${TZ}
+    volumes:
+      - ./backups:/backups
+    networks:
+      - zabbix-backend
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+networks:
+  zabbix-backend:
+    driver: bridge
+    internal: true
+  zabbix-frontend:
+    driver: bridge
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  postgres_data:
+    driver: local
+  snmptraps:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local

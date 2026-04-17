@@ -1,0 +1,114 @@
+# ==============================================================================
+# Caddyfile per Zabbix MSP Central
+# ==============================================================================
+# Caddy gestisce automaticamente:
+# - Certificati Let's Encrypt (richiede che il dominio punti a questo server)
+# - Redirect HTTP -> HTTPS
+# - HTTP/2 e HTTP/3
+# - Rinnovi automatici dei certificati
+# ==============================================================================
+
+# Opzioni globali
+{
+	email {$ACME_EMAIL}
+	# Decommenta la riga sotto per usare lo staging di Let's Encrypt durante i test
+	# (evita di sbattere contro i rate limit di produzione)
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+
+	# Log globale
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+
+	# Server options
+	servers {
+		protocols h1 h2 h3
+	}
+}
+
+# ------------------------------------------------------------------------------
+# Endpoint healthcheck interno (HTTP, non esposto pubblicamente)
+# ------------------------------------------------------------------------------
+:80 {
+	@healthcheck path /health-check-zabbix-msp
+	respond @healthcheck 200
+}
+
+# ------------------------------------------------------------------------------
+# Frontend Zabbix HTTPS
+# ------------------------------------------------------------------------------
+{$ZBX_FQDN} {
+	# Log per questo site
+	log {
+		output stdout
+		format console
+	}
+
+	# Header di sicurezza
+	header {
+		# HSTS: forza HTTPS per 1 anno (abilitare solo dopo che tutto funziona!)
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+		# Protezione clickjacking
+		X-Frame-Options "SAMEORIGIN"
+
+		# Disabilita sniffing del content-type
+		X-Content-Type-Options "nosniff"
+
+		# Referrer policy
+		Referrer-Policy "strict-origin-when-cross-origin"
+
+		# Permissions policy - disabilita feature del browser non necessarie
+		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+
+		# Rimuovi header che rivelano info sul server
+		-Server
+		-X-Powered-By
+	}
+
+	# Proxy verso il container zabbix-web
+	reverse_proxy zabbix-web:8080 {
+		# Timeout generosi per operazioni lunghe (export, report)
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+
+		# Header per passare info reali al backend
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+
+	# Encoding
+	encode gzip zstd
+
+	# Limiti body upload (per import template grandi)
+	request_body {
+		max_size 50MB
+	}
+}
+
+# ------------------------------------------------------------------------------
+# ESEMPI DI CONFIGURAZIONI AGGIUNTIVE
+# ------------------------------------------------------------------------------
+# Se vuoi limitare l'accesso a IP specifici (es. solo VPN MSP), aggiungi
+# questo blocco dentro il site {$ZBX_FQDN}:
+#
+#   @allowed_ips {
+#     remote_ip 10.0.0.0/8 192.168.0.0/16 1.2.3.4/32
+#   }
+#   handle @allowed_ips {
+#     reverse_proxy zabbix-web:8080 { ... }
+#   }
+#   respond "Access denied" 403
+#
+# ------------------------------------------------------------------------------
+# Se gestisci più domini (es. anche status page), aggiungi altri blocchi:
+#
+#   status.msp.example.com {
+#     reverse_proxy uptime-kuma:3001
+#   }
