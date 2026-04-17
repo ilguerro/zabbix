@@ -68,15 +68,15 @@ services:
       ZBX_TLSACCEPT: psk
       ZBX_TLSPSKIDENTITY: ${ZBX_TLS_PSK_IDENTITY}
       ZBX_TLSPSKFILE: /var/lib/zabbix/enc/proxy.psk
+      ZBX_TLS_PSK_VALUE: ${ZBX_TLS_PSK_VALUE}
 
       TZ: ${TZ}
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /var/lib/zabbix/enc && echo -n $$ZBX_TLS_PSK_VALUE > /var/lib/zabbix/enc/proxy.psk && exec /usr/sbin/zabbix_proxy -f"]
     volumes:
       # Database SQLite persistente - fondamentale!
       - proxy_data:/var/lib/zabbix
       # MIB custom per Ubiquiti, stampanti, ecc.
       - ./mibs:/var/lib/zabbix/mibs:ro
-      # File PSK (generato manualmente - vedi README)
-      - ./enc:/var/lib/zabbix/enc:ro
       # External scripts (se servono controlli custom)
       - ./externalscripts:/usr/lib/zabbix/externalscripts:ro
       # SNMP traps condivisi con il container snmptraps
