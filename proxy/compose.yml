@@ -112,13 +112,27 @@ services:
       - snmptraps:/var/lib/zabbix/snmptraps:ro
     networks:
       - zabbix-proxy-net
+    # I discovery worker e i poller asincroni aprono un file descriptor per ogni
+    # check concorrente. Col default di 1024 Zabbix riduce da solo
+    # MaxConcurrentChecksPerPoller (avviso "user limit of 1024 file descriptors
+    # is insufficient"). In alternativa si puo' abbassare
+    # ZBX_MAXCONCURRENTCHECKSPERPOLLER nel .env.
+    ulimits:
+      nofile:
+        soft: 16384
+        hard: 16384
     sysctls:
       - net.ipv4.ip_local_port_range=1024 65000
       - net.ipv4.conf.all.accept_redirects=0
       - net.ipv4.conf.all.secure_redirects=0
       - net.ipv4.conf.all.send_redirects=0
+    # Il vecchio check "nc -z 127.0.0.1 10051" apriva una connessione TCP al
+    # trapper senza inviare nulla, e il proxy la registrava come
+    # "trapper got non-JSON data" a ogni giro. Qui si guarda direttamente la
+    # tabella dei socket del kernel: nessuna connessione, nessun rumore nei log.
+    # 2743 = 10051 in esadecimale, 0A = stato LISTEN.
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 10051 || exit 1"]
+      test: ["CMD-SHELL", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -qE ':2743 0+:0000 0A'"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -154,8 +168,14 @@ services:
     environment:
       # Deve combaciare con l'host creato nel frontend per questo proxy
       ZBX_HOSTNAME: ${ZBX_PROXY_HOSTNAME}
-      ZBX_SERVER_HOST: "zabbix-proxy,127.0.0.1"
-      ZBX_SERVER_ACTIVE: "zabbix-proxy"
+      # ZBX_SERVER_HOST viene messo dall'entrypoint SIA in Server= (check
+      # passivi) SIA in ServerActive= (check attivi), quindi deve contenere solo
+      # il proxy. Mettendoci anche 127.0.0.1 l'agent cercava un server sulla
+      # propria loopback -> "connection refused" ogni pochi secondi.
+      # NB: ZBX_SERVER_ACTIVE non esiste, la variabile giusta e' ZBX_ACTIVESERVERS.
+      ZBX_SERVER_HOST: zabbix-proxy
+      # Solo nella lista passiva: serve per un zabbix_get locale in debug.
+      ZBX_PASSIVESERVERS: 127.0.0.1
       ZBX_PASSIVE_ALLOW: "true"
       TZ: ${TZ}
     networks:
