@@ -53,6 +53,12 @@ services:
       - "wal_buffers=${PG_WAL_BUFFERS}"
       - "-c"
       - "checkpoint_completion_target=${PG_CHECKPOINT_COMPLETION_TARGET}"
+      - "-c"
+      - "max_wal_size=8GB"
+      - "-c"
+      - "min_wal_size=2GB"
+      - "-c"
+      - "checkpoint_timeout=15min"
 
   # ----------------------------------------------------------------------------
   # Zabbix Server
@@ -89,6 +95,9 @@ services:
       ZBX_HISTORYINDEXCACHESIZE: ${ZBX_HISTORYINDEXCACHESIZE}
       ZBX_TRENDCACHESIZE: ${ZBX_TRENDCACHESIZE}
       ZBX_VALUECACHESIZE: ${ZBX_VALUECACHESIZE}
+      ZBX_STARTPROXYPOLLERS: ${ZBX_STARTPROXYPOLLERS}
+      ZBX_STARTDBSYNCERS: ${ZBX_STARTDBSYNCERS}
+      ZBX_STARTPREPROCESSORS: ${ZBX_STARTPREPROCESSORS}
       TZ: ${TZ}
     volumes:
       - ./zabbix/server/alertscripts:/usr/lib/zabbix/alertscripts:ro
