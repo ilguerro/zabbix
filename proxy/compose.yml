@@ -1,17 +1,23 @@
----
 # ==============================================================================
 # Zabbix Proxy - Sede Cliente (MSP)
-# Stack: Zabbix Proxy (SQLite) + Zabbix Agent2 per automonitoring
+# Stack: Zabbix Proxy (SQLite) + SNMP traps + Zabbix Agent2 per automonitoring
 # ==============================================================================
-# Modalità ACTIVE: il proxy inizia lui la connessione verso il server centrale.
-# Richiede SOLO connettività OUTBOUND dalla sede cliente verso il server
-# centrale sulla porta 10051 (TCP).
+# Modalita' ACTIVE: il proxy inizia lui la connessione verso il server centrale.
+# Richiede SOLO connettivita' OUTBOUND dalla sede cliente verso il server
+# centrale sulla porta 10051/TCP. Nessuna porta in ingresso da Internet.
+#
+# La versione DEVE corrispondere a quella del server centrale (ZABBIX_VERSION).
 # ==============================================================================
 
 name: zabbix-proxy
 
-services:
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
+services:
   # ----------------------------------------------------------------------------
   # Zabbix Proxy (SQLite)
   # ----------------------------------------------------------------------------
@@ -20,50 +26,72 @@ services:
     container_name: zabbix-proxy
     restart: unless-stopped
     stop_grace_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
     ports:
-      # Porta per agent passivi locali (facoltativa: se tutti gli agent sono
-      # attivi puoi anche non esporla). Serve se il proxy deve interrogare
-      # gli agent dei device monitorati.
-      - "10051:10051"
-    # mem_limit: 1g
+      # Trapper del proxy: qui gli agent ATTIVI della sede inviano i dati e il
+      # server centrale interroga il proxy se lo si mette in modalita' passiva.
+      # Esporla solo sulla LAN della sede, mai su Internet.
+      - "${ZBX_LISTEN_ADDR}:10051:10051"
     environment:
-      # Identificazione proxy
+      # --- Identificazione -----------------------------------------------------
+      # ZBX_HOSTNAME deve combaciare ESATTAMENTE con il nome del proxy
+      # configurato nel frontend (Administration -> Proxies).
       ZBX_HOSTNAME: ${ZBX_PROXY_HOSTNAME}
       ZBX_SERVER_HOST: ${ZBX_SERVER_HOST}
-      ZBX_SERVER_PORT: 10051
-      ZBX_PROXYMODE: 0  # 0 = active, 1 = passive
+      ZBX_PROXYMODE: ${ZBX_PROXYMODE}
 
-      # Timeout e performance
+      # --- Timeout e sincronizzazione col server -------------------------------
       ZBX_TIMEOUT: ${ZBX_TIMEOUT}
-      ZBX_CONFIGFREQUENCY: ${ZBX_CONFIGFREQUENCY}
+      # Ogni quanti secondi il proxy riscarica la configurazione dal server.
+      # NB: da Zabbix 7.0 il parametro e' ProxyConfigFrequency; il vecchio
+      # ConfigFrequency (e HeartbeatFrequency) non esistono piu'.
+      ZBX_PROXYCONFIGFREQUENCY: ${ZBX_PROXYCONFIGFREQUENCY}
       ZBX_DATASENDERFREQUENCY: ${ZBX_DATASENDERFREQUENCY}
-      ZBX_HEARTBEATFREQUENCY: ${ZBX_HEARTBEATFREQUENCY}
 
-      # Cache e pollers (scala in base al carico)
+      # --- Buffer dati (7.0+) --------------------------------------------------
+      # ProxyBufferMode hybrid: i valori restano in RAM e vengono scritti su
+      # SQLite solo quando serve (server irraggiungibile o buffer pieno).
+      # Riduce moltissimo l'usura del disco rispetto a "disk".
+      ZBX_PROXYBUFFERMODE: ${ZBX_PROXYBUFFERMODE}
+      ZBX_PROXYMEMORYBUFFERSIZE: ${ZBX_PROXYMEMORYBUFFERSIZE}
+      ZBX_PROXYMEMORYBUFFERAGE: ${ZBX_PROXYMEMORYBUFFERAGE}
+      # Ore di dati conservati se il server centrale e' offline
+      ZBX_PROXYOFFLINEBUFFER: ${ZBX_PROXYOFFLINEBUFFER}
+      # Ore di dati mantenuti anche dopo l'invio (0 = cancella subito)
+      ZBX_PROXYLOCALBUFFER: ${ZBX_PROXYLOCALBUFFER}
+
+      # --- Cache ---------------------------------------------------------------
       ZBX_CACHESIZE: ${ZBX_CACHESIZE}
       ZBX_HISTORYCACHESIZE: ${ZBX_HISTORYCACHESIZE}
       ZBX_HISTORYINDEXCACHESIZE: ${ZBX_HISTORYINDEXCACHESIZE}
+      ZBX_HOUSEKEEPINGFREQUENCY: ${ZBX_HOUSEKEEPINGFREQUENCY}
+
+      # --- Pollers sincroni ----------------------------------------------------
       ZBX_STARTPOLLERS: ${ZBX_STARTPOLLERS}
       ZBX_STARTPOLLERSUNREACHABLE: ${ZBX_STARTPOLLERSUNREACHABLE}
       ZBX_STARTPINGERS: ${ZBX_STARTPINGERS}
       ZBX_STARTTRAPPERS: ${ZBX_STARTTRAPPERS}
       ZBX_STARTDISCOVERERS: ${ZBX_STARTDISCOVERERS}
       ZBX_STARTHTTPPOLLERS: ${ZBX_STARTHTTPPOLLERS}
+      ZBX_STARTPREPROCESSORS: ${ZBX_STARTPREPROCESSORS}
+      ZBX_STARTDBSYNCERS: ${ZBX_STARTDBSYNCERS}
+
+      # --- Pollers asincroni (7.0+) --------------------------------------------
+      # Gestiscono molti check concorrenti per processo: molto piu' efficienti
+      # dei pollers classici per agent/SNMP/HTTP su sedi con tanti host.
+      ZBX_STARTAGENTPOLLERS: ${ZBX_STARTAGENTPOLLERS}
+      ZBX_STARTSNMPPOLLERS: ${ZBX_STARTSNMPPOLLERS}
+      ZBX_STARTHTTPAGENTPOLLERS: ${ZBX_STARTHTTPAGENTPOLLERS}
+      ZBX_MAXCONCURRENTCHECKSPERPOLLER: ${ZBX_MAXCONCURRENTCHECKSPERPOLLER}
+
+      # --- SNMP traps ----------------------------------------------------------
+      ZBX_ENABLE_SNMP_TRAPS: "true"
       ZBX_STARTSNMPTRAPPER: ${ZBX_STARTSNMPTRAPPER}
 
-      # SNMP traps
-      ZBX_ENABLE_SNMP_TRAPS: "true"
-
-      # Buffer offline (se cade la VPN/Internet il proxy bufferizza)
-      ZBX_PROXYOFFLINEBUFFER: ${ZBX_PROXYOFFLINEBUFFER}
-      ZBX_PROXYLOCALBUFFER: ${ZBX_PROXYLOCALBUFFER}
-
-      # TLS verso il server centrale (PSK)
+      # --- TLS verso il server centrale (PSK) ----------------------------------
+      # Identity e valore devono combaciare ESATTAMENTE con quanto inserito nel
+      # frontend sul proxy corrispondente. Il file .psk viene generato all'avvio
+      # dall'entrypoint a partire da ZBX_TLS_PSK_VALUE (vedi sotto).
       ZBX_TLSCONNECT: psk
       ZBX_TLSACCEPT: psk
       ZBX_TLSPSKIDENTITY: ${ZBX_TLS_PSK_IDENTITY}
@@ -71,16 +99,28 @@ services:
       ZBX_TLS_PSK_VALUE: ${ZBX_TLS_PSK_VALUE}
 
       TZ: ${TZ}
-    entrypoint: ["/bin/sh", "-c", "mkdir -p /var/lib/zabbix/enc && echo -n $$ZBX_TLS_PSK_VALUE > /var/lib/zabbix/enc/proxy.psk && exec /usr/bin/docker-entrypoint.sh /usr/sbin/zabbix_proxy --foreground -c /etc/zabbix/zabbix_proxy.conf"]
+    # Scrive la PSK su tmpfs (mai su disco) e poi passa la mano all'entrypoint
+    # ufficiale, che genera zabbix_proxy.conf dalle variabili ZBX_*.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        umask 077
+        printf '%s' "$$ZBX_TLS_PSK_VALUE" > /var/lib/zabbix/enc/proxy.psk
+        exec /usr/bin/docker-entrypoint.sh /usr/sbin/zabbix_proxy --foreground -c /etc/zabbix/zabbix_proxy.conf
     volumes:
-      # Database SQLite persistente - fondamentale!
-      - proxy_data:/var/lib/zabbix
-      # MIB custom per Ubiquiti, stampanti, ecc.
-      - ./mibs:/var/lib/zabbix/mibs:ro
-      # External scripts (se servono controlli custom)
-      - ./externalscripts:/usr/lib/zabbix/externalscripts:ro
-      # SNMP traps condivisi con il container snmptraps
+      # Database SQLite persistente. Volume nominato (non bind mount): cosi'
+      # Docker eredita owner/permessi corretti dall'immagine (uid zabbix).
+      - proxy_db:/var/lib/zabbix/db_data
+      # MIB custom per Ubiquiti, stampanti, switch, ecc.
+      - ./zabbix/mibs:/var/lib/zabbix/mibs:ro
+      # External scripts per controlli custom
+      - ./zabbix/externalscripts:/usr/lib/zabbix/externalscripts:ro
+      # Trap SNMP condivise col container snmptraps
       - snmptraps:/var/lib/zabbix/snmptraps:ro
+    tmpfs:
+      # La PSK vive solo in RAM: viene rigenerata dal .env a ogni riavvio.
+      - /var/lib/zabbix/enc:mode=1777
     networks:
       - zabbix-proxy-net
     sysctls:
@@ -89,21 +129,22 @@ services:
       - net.ipv4.conf.all.secure_redirects=0
       - net.ipv4.conf.all.send_redirects=0
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 10051 || exit 1"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 10051 || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 60s
 
   # ----------------------------------------------------------------------------
-  # SNMP Traps receiver (riceve trap SNMP da switch/stampanti in sede)
+  # SNMP Traps receiver (trap da switch, stampanti, UPS della sede)
   # ----------------------------------------------------------------------------
   zabbix-snmptraps:
     image: zabbix/zabbix-snmptraps:${ZABBIX_VERSION}
     container_name: zabbix-snmptraps
     restart: unless-stopped
+    logging: *default-logging
     ports:
-      - "162:1162/udp"
+      - "${ZBX_LISTEN_ADDR}:162:1162/udp"
     volumes:
       - snmptraps:/var/lib/zabbix/snmptraps:rw
     environment:
@@ -118,9 +159,11 @@ services:
     image: zabbix/zabbix-agent2:${ZABBIX_VERSION}
     container_name: zabbix-agent
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       - zabbix-proxy
     environment:
+      # Deve combaciare con l'host creato nel frontend per questo proxy
       ZBX_HOSTNAME: ${ZBX_PROXY_HOSTNAME}
       ZBX_SERVER_HOST: "zabbix-proxy,127.0.0.1"
       ZBX_SERVER_ACTIVE: "zabbix-proxy"
@@ -142,7 +185,7 @@ networks:
 # Volumes
 # ==============================================================================
 volumes:
-  proxy_data:
+  proxy_db:
     driver: local
   snmptraps:
     driver: local
