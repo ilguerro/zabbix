@@ -90,24 +90,16 @@ services:
 
       # --- TLS verso il server centrale (PSK) ----------------------------------
       # Identity e valore devono combaciare ESATTAMENTE con quanto inserito nel
-      # frontend sul proxy corrispondente. Il file .psk viene generato all'avvio
-      # dall'entrypoint a partire da ZBX_TLS_PSK_VALUE (vedi sotto).
+      # frontend sul proxy corrispondente.
+      # ZBX_TLSPSK contiene la PSK in chiaro: l'entrypoint ufficiale la scrive
+      # da solo in /var/lib/zabbix/enc_internal/ZBX_TLSPSKFILE con permessi 0600
+      # e imposta ZBX_TLSPSKFILE di conseguenza. Non serve crearla a mano.
       ZBX_TLSCONNECT: psk
       ZBX_TLSACCEPT: psk
       ZBX_TLSPSKIDENTITY: ${ZBX_TLS_PSK_IDENTITY}
-      ZBX_TLSPSKFILE: /var/lib/zabbix/enc/proxy.psk
-      ZBX_TLS_PSK_VALUE: ${ZBX_TLS_PSK_VALUE}
+      ZBX_TLSPSK: ${ZBX_TLS_PSK_VALUE}
 
       TZ: ${TZ}
-    # Scrive la PSK su tmpfs (mai su disco) e poi passa la mano all'entrypoint
-    # ufficiale, che genera zabbix_proxy.conf dalle variabili ZBX_*.
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        umask 077
-        printf '%s' "$$ZBX_TLS_PSK_VALUE" > /var/lib/zabbix/enc/proxy.psk
-        exec /usr/bin/docker-entrypoint.sh /usr/sbin/zabbix_proxy --foreground -c /etc/zabbix/zabbix_proxy.conf
     volumes:
       # Database SQLite persistente. Volume nominato (non bind mount): cosi'
       # Docker eredita owner/permessi corretti dall'immagine (uid zabbix).
@@ -118,9 +110,6 @@ services:
       - ./zabbix/externalscripts:/usr/lib/zabbix/externalscripts:ro
       # Trap SNMP condivise col container snmptraps
       - snmptraps:/var/lib/zabbix/snmptraps:ro
-    tmpfs:
-      # La PSK vive solo in RAM: viene rigenerata dal .env a ogni riavvio.
-      - /var/lib/zabbix/enc:mode=1777
     networks:
       - zabbix-proxy-net
     sysctls:
