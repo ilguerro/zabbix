@@ -32,7 +32,7 @@ services:
       retries: 5
       start_period: 30s
     # Tuning di base - aggiusta in base a RAM della VM
-    shm_size: 1g
+    shm_size: ${PG_SHM_SIZE}
     command:
       - "postgres"
       - "-c"
@@ -54,11 +54,11 @@ services:
       - "-c"
       - "checkpoint_completion_target=${PG_CHECKPOINT_COMPLETION_TARGET}"
       - "-c"
-      - "max_wal_size=8GB"
+      - "max_wal_size=${PG_MAX_WAL_SIZE}"
       - "-c"
-      - "min_wal_size=2GB"
+      - "min_wal_size=${PG_MIN_WAL_SIZE}"
       - "-c"
-      - "checkpoint_timeout=15min"
+      - "checkpoint_timeout=${PG_CHECKPOINT_TIMEOUT}"
 
   # ----------------------------------------------------------------------------
   # Zabbix Server
