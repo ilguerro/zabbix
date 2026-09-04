@@ -1,29 +1,28 @@
 name: zabbix-central
 
-services:
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
+services:
   # ----------------------------------------------------------------------------
-  # Database: PostgreSQL 16 + TimescaleDB
+  # Database: PostgreSQL 18 + TimescaleDB
   # ----------------------------------------------------------------------------
   postgres:
-    image: timescale/timescaledb:2.17.2-pg16
+    image: timescale/timescaledb:2.23.1-pg18
     container_name: zabbix-postgres
     restart: unless-stopped
     stop_grace_period: 1m
-    # mem_limit: 2g
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       TZ: ${TZ}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - ./postgres/postgres_data:/var/lib/postgresql
     networks:
       - zabbix-backend
     healthcheck:
@@ -33,6 +32,7 @@ services:
       retries: 5
       start_period: 30s
     # Tuning di base - aggiusta in base a RAM della VM
+    shm_size: 1g
     command:
       - "postgres"
       - "-c"
@@ -62,12 +62,7 @@ services:
     container_name: zabbix-server
     restart: unless-stopped
     stop_grace_period: 30s
-    # mem_limit: 4g
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,6 +70,7 @@ services:
       # Porta per agent attivi e connessioni dai proxy
       - "10051:10051"
     environment:
+      ENABLE_TIMESCALEDB: "true"
       DB_SERVER_HOST: postgres
       DB_SERVER_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB}
@@ -95,14 +91,16 @@ services:
       ZBX_VALUECACHESIZE: ${ZBX_VALUECACHESIZE}
       TZ: ${TZ}
     volumes:
-      - ./zabbix/alertscripts:/usr/lib/zabbix/alertscripts:ro
-      - ./zabbix/externalscripts:/usr/lib/zabbix/externalscripts:ro
+      - ./zabbix/server/alertscripts:/usr/lib/zabbix/alertscripts:ro
+      - ./zabbix/server/externalscripts:/usr/lib/zabbix/externalscripts:ro
       - snmptraps:/var/lib/zabbix/snmptraps:ro
-      - ./zabbix/mibs:/var/lib/zabbix/mibs:ro
-      - ./zabbix/enc:/var/lib/zabbix/enc:ro
+      - ./zabbix/server/mibs:/var/lib/zabbix/mibs:ro
+      - ./zabbix/server/enc:/var/lib/zabbix/enc:ro
     networks:
-      - zabbix-backend
-      - zabbix-frontend
+      zabbix-backend:
+      zabbix-frontend:
+        aliases:
+          - ${ZBX_FQDN}
     sysctls:
       - net.ipv4.ip_local_port_range=1024 65000
       - net.ipv4.conf.all.accept_redirects=0
@@ -117,19 +115,14 @@ services:
     container_name: zabbix-web
     restart: unless-stopped
     stop_grace_period: 10s
-    # mem_limit: 1g
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
       zabbix-server:
         condition: service_started
     environment:
-      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_HOST: ${ZBX_FQDN}
       ZBX_SERVER_PORT: 10051
       DB_SERVER_HOST: postgres
       DB_SERVER_PORT: 5432
@@ -156,6 +149,7 @@ services:
     container_name: zabbix-caddy
     restart: unless-stopped
     stop_grace_period: 10s
+    logging: *default-logging
     depends_on:
       - zabbix-web
     ports:
@@ -170,8 +164,8 @@ services:
       TZ: ${TZ}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data           # Certificati Let's Encrypt (persistenti!)
-      - caddy_config:/config
+      - ./caddy/data:/data           # Certificati Let's Encrypt (persistenti!)
+      - ./caddy/config:/config
     networks:
       - zabbix-frontend
     healthcheck:
@@ -190,6 +184,7 @@ services:
     restart: unless-stopped
     depends_on:
       - zabbix-server
+    logging: *default-logging
     environment:
       ZBX_HOSTNAME: "Zabbix server"
       ZBX_SERVER_HOST: "zabbix-server,127.0.0.1"
@@ -208,6 +203,7 @@ services:
     image: zabbix/zabbix-snmptraps:${ZABBIX_VERSION}
     container_name: zabbix-snmptraps
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "162:1162/udp"
     volumes:
@@ -221,9 +217,10 @@ services:
   # Backup automatico del database PostgreSQL
   # ----------------------------------------------------------------------------
   postgres-backup:
-    image: prodrigestivill/postgres-backup-local:16
+    image: prodrigestivill/postgres-backup-local:18
     container_name: zabbix-postgres-backup
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -240,9 +237,15 @@ services:
       HEALTHCHECK_PORT: 8080
       TZ: ${TZ}
     volumes:
-      - ./backups:/backups
+      - ./postgres/backups:/backups
     networks:
       - zabbix-backend
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck"]
+      interval: 5m
+      timeout: 5s
+      retries: 3
+      start_period: 1m
 
 # ==============================================================================
 # Networks
@@ -258,11 +261,5 @@ networks:
 # Volumes
 # ==============================================================================
 volumes:
-  postgres_data:
-    driver: local
   snmptraps:
-    driver: local
-  caddy_data:
-    driver: local
-  caddy_config:
     driver: local
