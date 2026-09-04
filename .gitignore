@@ -1,0 +1,13 @@
+# Variabili d'ambiente - contengono password, token e PSK. Mai committare.
+.env
+*.env
+!*.env.example
+
+# Chiavi PSK generate a runtime
+**/enc/*.psk
+
+# Dati persistenti dei container
+central/postgres/postgres_data/
+central/postgres/backups/
+central/caddy/data/
+central/caddy/config/
