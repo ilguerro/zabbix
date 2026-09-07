@@ -11,3 +11,5 @@ central/postgres/postgres_data/
 central/postgres/backups/
 central/caddy/data/
 central/caddy/config/
+central/snmptraps/
+proxy/snmptraps/

@@ -18,6 +18,7 @@ central/
 │   ├── externalscripts/      # Script per external checks
 │   ├── mibs/                 # MIB SNMP custom (Ubiquiti, stampanti, ecc.)
 │   └── enc/                  # File PSK per TLS con i proxy
+├── snmptraps/                # Spool trap SNMP (server + snmptraps)
 └── backups/                  # Backup automatici del DB
 ```
 
@@ -50,7 +51,12 @@ Aggiorna `.env` con:
 ```bash
 mkdir -p zabbix/{alertscripts,externalscripts,mibs,enc}
 mkdir -p backups
+mkdir -p snmptraps && chown 199:199 snmptraps
 ```
+
+`snmptraps` è uno spool in bind mount e deve appartenere all'utente
+`zabbix` dei container (uid 199 nelle immagini ufficiali), altrimenti il
+receiver non riesce a scriverci le trap ricevute.
 
 ### 4. (Opzionale) Test con Let's Encrypt staging
 

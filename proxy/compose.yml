@@ -108,8 +108,8 @@ services:
       - ./zabbix/mibs:/var/lib/zabbix/mibs:ro
       # External scripts per controlli custom
       - ./zabbix/externalscripts:/usr/lib/zabbix/externalscripts:ro
-      # Trap SNMP condivise col container snmptraps
-      - snmptraps:/var/lib/zabbix/snmptraps:ro
+      # Trap SNMP condivise col container snmptraps (bind mount locale)
+      - ./snmptraps:/var/lib/zabbix/snmptraps:ro
     networks:
       - zabbix-proxy-net
     # I discovery worker e i poller asincroni aprono un file descriptor per ogni
@@ -149,7 +149,10 @@ services:
     ports:
       - "${ZBX_LISTEN_ADDR}:162:1162/udp"
     volumes:
-      - snmptraps:/var/lib/zabbix/snmptraps:rw
+      # Spool trap SNMP: bind mount locale, deve essere scrivibile
+      # dall'utente zabbix (uid 199). Al setup:
+      #   mkdir -p snmptraps && chown 199:199 snmptraps
+      - ./snmptraps:/var/lib/zabbix/snmptraps:rw
     environment:
       TZ: ${TZ}
     networks:
@@ -194,7 +197,7 @@ networks:
 # Volumes
 # ==============================================================================
 volumes:
+  # Unico volume nominato: il DB SQLite del proxy. Vedi il commento al
+  # mount in zabbix-proxy perche' resta un volume e non un bind mount.
   proxy_db:
-    driver: local
-  snmptraps:
     driver: local

@@ -18,7 +18,8 @@ proxy/
 ├── enc/
 │   └── proxy.psk        # File PSK (generato al setup)
 ├── mibs/                # MIB custom (Ubiquiti, stampanti, ecc.)
-└── externalscripts/     # Script custom (opzionale)
+├── externalscripts/     # Script custom (opzionale)
+└── snmptraps/           # Spool trap SNMP (bind mount, uid 199)
 ```
 
 ## Setup
@@ -26,9 +27,15 @@ proxy/
 ### 1. Preparazione
 
 ```bash
-mkdir -p enc mibs externalscripts
+mkdir -p enc mibs externalscripts snmptraps
 chmod 700 enc
+chown 199:199 snmptraps
 ```
+
+`snmptraps` è uno spool in bind mount e deve appartenere all'utente
+`zabbix` dei container (uid 199 nelle immagini ufficiali; verifica con
+`docker run --rm --entrypoint id zabbix/zabbix-snmptraps:<tag> zabbix`),
+altrimenti il receiver non riesce a scriverci le trap ricevute.
 
 ### 2. Configurazione server centrale (FARLO PRIMA)
 

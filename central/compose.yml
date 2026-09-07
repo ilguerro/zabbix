@@ -102,7 +102,8 @@ services:
     volumes:
       - ./zabbix/server/alertscripts:/usr/lib/zabbix/alertscripts:ro
       - ./zabbix/server/externalscripts:/usr/lib/zabbix/externalscripts:ro
-      - snmptraps:/var/lib/zabbix/snmptraps:ro
+      # Spool trap SNMP condiviso col container snmptraps (bind mount locale)
+      - ./snmptraps:/var/lib/zabbix/snmptraps:ro
       - ./zabbix/server/mibs:/var/lib/zabbix/mibs:ro
       - ./zabbix/server/enc:/var/lib/zabbix/enc:ro
     networks:
@@ -216,7 +217,10 @@ services:
     ports:
       - "162:1162/udp"
     volumes:
-      - snmptraps:/var/lib/zabbix/snmptraps:rw
+      # Spool trap SNMP: bind mount locale, deve essere scrivibile
+      # dall'utente zabbix (uid 199). Al setup:
+      #   mkdir -p snmptraps && chown 199:199 snmptraps
+      - ./snmptraps:/var/lib/zabbix/snmptraps:rw
     environment:
       TZ: ${TZ}
     networks:
@@ -265,10 +269,3 @@ networks:
     internal: true
   zabbix-frontend:
     driver: bridge
-
-# ==============================================================================
-# Volumes
-# ==============================================================================
-volumes:
-  snmptraps:
-    driver: local
